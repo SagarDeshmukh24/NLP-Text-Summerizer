@@ -56,6 +56,8 @@ jobs:
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
+        with:
+          mask-password: true  # ← was missing in your new yaml
 
       - name: Build, tag, and push image to Amazon ECR
         id: build-image
@@ -63,13 +65,23 @@ jobs:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_NAME }}
           IMAGE_TAG: latest
-
         run: |
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
 
-          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+          # Verify the value before writing to output
+          IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          echo "Built and pushed image: $IMAGE_URI"
+          echo "image=$IMAGE_URI" >> $GITHUB_OUTPUT
+
+      # ↓ Add this debug step — helps catch empty outputs immediately
+      - name: Verify image output
+        run: |
+          echo "Image output value: ${{ steps.build-image.outputs.image }}"
+          if [ -z "${{ steps.build-image.outputs.image }}" ]; then
+            echo "ERROR: image output is empty!"
+            exit 1
+          fi
 
   Continuous-Deployment:
     name: Continuous Deployment
@@ -90,26 +102,37 @@ jobs:
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
+        with:
+          mask-password: true
 
       - name: Pull latest image
+        # ↓ FIX: Use secrets directly (same as old working yaml) as the reliable fallback.
+        #   This avoids depending on cross-job output passing entirely.
+        env:
+          IMAGE: ${{ needs.build-and-push-ecr-image.outputs.image }}
         run: |
-          docker pull ${{ needs.build-and-push-ecr-image.outputs.image }}
+          # Use job output if available, otherwise fall back to secrets
+          PULL_IMAGE="${IMAGE:-${{ secrets.AWS_ECR_LOGIN_URI }}/${{ secrets.ECR_REPOSITORY_NAME }}:latest}"
+          echo "Pulling: $PULL_IMAGE"
+          docker pull $PULL_IMAGE
 
       - name: Stop and remove old container
         run: |
-          docker stop texts || true
-          docker rm texts || true
+          # ↓ FIX: Safer pattern from old yaml — avoids failure if container doesn't exist
+          docker ps -q --filter "name=texts" | grep -q . && docker stop texts && docker rm -fv texts || true
 
       - name: Run Docker container
+        env:
+          IMAGE: ${{ needs.build-and-push-ecr-image.outputs.image }}
         run: |
+          RUN_IMAGE="${IMAGE:-${{ secrets.AWS_ECR_LOGIN_URI }}/${{ secrets.ECR_REPOSITORY_NAME }}:latest}"
           docker run -d \
             -p 8080:8080 \
             --name texts \
-            -e AWS_ACCESS_KEY_ID='${{ secrets.AWS_ACCESS_KEY_ID }}' \
-            -e AWS_SECRET_ACCESS_KEY='${{ secrets.AWS_SECRET_ACCESS_KEY }}' \
-            -e AWS_REGION='${{ secrets.AWS_REGION }}' \
-            ${{ needs.build-and-push-ecr-image.outputs.image }}
+            -e AWS_ACCESS_KEY_ID="${{ secrets.AWS_ACCESS_KEY_ID }}" \
+            -e AWS_SECRET_ACCESS_KEY="${{ secrets.AWS_SECRET_ACCESS_KEY }}" \
+            -e AWS_REGION="${{ secrets.AWS_REGION }}" \
+            $RUN_IMAGE
 
       - name: Clean unused Docker resources
-        run: |
-          docker system prune -f
+        run: docker system prune -f
