@@ -1,13 +1,30 @@
-FROM python:3.8-slim-buster
+FROM python:3.11-slim
 
-RUN apt update -y && apt install awscli -y
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    awscli \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
 WORKDIR /app
 
-COPY . /app
+# Copy requirements first for better caching
+COPY requirements.txt .
 
-RUN pip install -r requirements.txt
-RUN pip install --upgrade accelerate
-RUN pip uninstall -y transformers accelerate
-RUN pip install transformers accelerate
+# Upgrade pip
+RUN pip install --upgrade pip
 
-CMD ["python3", "app.py"]
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install/upgrade required ML libraries
+RUN pip install --no-cache-dir --upgrade transformers accelerate
+
+# Copy project files
+COPY . .
+
+# Expose app port (optional but recommended)
+EXPOSE 8080
+
+# Run application
+CMD ["python", "app.py"]
