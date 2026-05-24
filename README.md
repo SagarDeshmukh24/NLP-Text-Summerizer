@@ -90,7 +90,7 @@ Email: sagard2410@gmail.com
 
 	
 ## 3. Create ECR repo to store/save docker image
-    - Save the URI: 566373416292.dkr.ecr.us-east-1.amazonaws.com/text-s
+    - Save the URI: 836734448028.dkr.ecr.eu-north-1.amazonaws.com/text-sum
 
 	
 ## 4. Create EC2 machine (Ubuntu) 
